@@ -59,7 +59,7 @@ module Fastlane
         if params[:wait_for_completion]
           UI.message 'Waiting for the run to complete. ☕️'
           run = wait_for_run run
-          if params[:allow_device_errors] == "true"
+          if params[:allow_device_errors] == true
             raise "#{run.message} Failed 🙈" unless %w[PASSED WARNED ERRORED].include? run.result
           else
             raise "#{run.message} Failed 🙈" unless %w[PASSED WARNED].include? run.result
