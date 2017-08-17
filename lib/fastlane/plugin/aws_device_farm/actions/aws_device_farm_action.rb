@@ -30,11 +30,14 @@ module Fastlane
         test_upload = nil
         if params[:test_binary_path]
           test_path = File.expand_path(params[:test_binary_path])
-          if type == "ANDROID_APP"
-            test_upload = create_project_upload project, test_path, 'INSTRUMENTATION_TEST_PACKAGE'
+          if params[:test_package_type]
+            test_upload = create_project_upload project, test_path, params[:test_package_type]
           else
-
-            test_upload = create_project_upload project, test_path, 'XCTEST_UI_TEST_PACKAGE'
+            if type == "ANDROID_APP"
+              test_upload = create_project_upload project, test_path, 'INSTRUMENTATION_TEST_PACKAGE'
+            else
+              test_upload = create_project_upload project, test_path, 'XCTEST_UI_TEST_PACKAGE'
+            end
           end
 
           # Upload the test binary.
@@ -53,23 +56,30 @@ module Fastlane
         raise 'Binary upload failed. 🙈' unless upload.status == 'SUCCEEDED'
 
         # Schedule the run.
-        run = schedule_run params[:run_name], project, device_pool, upload, test_upload, type
+        run = schedule_run params[:run_name], project, device_pool, upload, test_upload, type, params
 
         # Wait for run to finish.
+        # rubocop:disable  Metrics/BlockNesting
         if params[:wait_for_completion]
           UI.message 'Waiting for the run to complete. ☕️'
-          run = wait_for_run run
-          if params[:allow_device_errors] == true
-            raise "#{run.message} Failed 🙈" unless %w[PASSED WARNED ERRORED].include? run.result
-          else
-            raise "#{run.message} Failed 🙈" unless %w[PASSED WARNED].include? run.result
-          end
+          run = wait_for_run project, run
+            if params[:allow_failed_tests] == false
+              if params[:allow_device_errors] == true
+                $allow_device_errors = true
+                raise "#{run.message} Failed 🙈" if %w[FAILED STOPPED SKIPPED].include? run.result
+              else
+                raise "#{run.message} Failed 🙈" unless %w[PASSED WARNED].include? run.result
+              end
+            else
+              raise "#{run.message} Failed 🙈" unless %w[PASSED WARNED].include? run.result
+            end
           UI.message 'Successfully tested the application on the AWS device farm. ✅'.green
         else
           UI.message 'Successfully scheduled the tests on the AWS device farm. ✅'.green
         end
       end
-
+      # rubocop:enable  Metrics/BlockNesting
+      #
       #####################################################
       # @!group Documentation
       #####################################################
@@ -112,13 +122,60 @@ module Fastlane
           FastlaneCore::ConfigItem.new(
             key:         :test_binary_path,
             env_name:    'FL_AWS_DEVICE_FARM_TEST_PATH',
-            description: 'Define the path of the test binary (apk) to upload to the device farm project',
+            description: 'Define the path of the test bundle to upload to the device farm project',
             is_string:   true,
             optional:    true,
             verify_block: proc do |value|
-              raise "Test binary not found at path '#{value}'. 🙈".red unless File.exist?(File.expand_path(value))
+              raise "Test bundle not found at path '#{value}'. 🙈".red unless File.exist?(File.expand_path(value))
             end
           ),
+          FastlaneCore::ConfigItem.new(
+            key:         :test_package_type,
+            env_name:    'FL_AWS_DEVICE_FARM_TEST_PACKAGE_TYPE',
+            description: 'Define the type of the test binary to upload to the device farm project',
+            is_string:   true,
+            optional:    true,
+            verify_block: proc do |value|
+              valid_values = ['APPIUM_JAVA_JUNIT_TEST_PACKAGE',
+                              'APPIUM_JAVA_TESTNG_TEST_PACKAGE',
+                              'APPIUM_PYTHON_TEST_PACKAGE',
+                              'APPIUM_WEB_JAVA_JUNIT_TEST_PACKAGE',
+                              'APPIUM_WEB_JAVA_TESTNG_TEST_PACKAGE',
+                              'APPIUM_WEB_PYTHON_TEST_PACKAGE',
+                              'CALABASH_TEST_PACKAGE',
+                              'INSTRUMENTATION_TEST_PACKAGE',
+                              'UIAUTOMATION_TEST_PACKAGE',
+                              'UIAUTOMATOR_TEST_PACKAGE',
+                              'XCTEST_TEST_PACKAGE',
+                              'XCTEST_UI_TEST_PACKAGE']
+              raise "Test package type not found valid values are: '#{valid_values}'. 🙈".red unless valid_values.include? value
+            end
+          ),
+          FastlaneCore::ConfigItem.new(
+            key:         :test_type,
+            env_name:    'FL_AWS_DEVICE_FARM_TEST_TYPE',
+            description: 'Define the type of the test binary to upload to the device farm project',
+            is_string:   true,
+            optional:    true,
+            verify_block: proc do |value|
+              valid_values = ['UIAUTOMATOR',
+                              'APPIUM_WEB_PYTHON',
+                              'CALABASH',
+                              'APPIUM_JAVA_TESTNG',
+                              'UIAUTOMATION',
+                              'BUILTIN_FUZZ',
+                              'INSTRUMENTATION',
+                              'APPIUM_JAVA_JUNIT',
+                              'XCTEST_UI',
+                              'APPIUM_WEB_JAVA_JUNIT',
+                              'APPIUM_PYTHON',
+                              'BUILTIN_EXPLORER',
+                              'XCTEST',
+                              'APPIUM_WEB_JAVA_TESTNG']
+              raise "Test type not found valid values are: '#{valid_values}'. 🙈".red unless valid_values.include? value
+            end
+          ),
+
           FastlaneCore::ConfigItem.new(
             key:         :path,
             env_name:    'FL_AWS_DEVICE_FARM_PATH',
@@ -147,8 +204,16 @@ module Fastlane
           ),
           FastlaneCore::ConfigItem.new(
             key:           :allow_device_errors,
-            env_name:      'FL_AWS_DEVICE_FARM_ALLOW_ERROR',
+            env_name:      'FL_AWS_DEVICE_FARM_ALLOW_DEVICE_ERRORS',
             description:   'Do you want to allow device booting errors?',
+            is_string:     false,
+            optional:      true,
+            default_value: false
+          ),
+          FastlaneCore::ConfigItem.new(
+            key:           :allow_failed_tests,
+            env_name:      'FL_AWS_DEVICE_FARM_ALLOW_FAILED_TESTS',
+            description:   'Do you want to allow failing tests?',
             is_string:     false,
             optional:      true,
             default_value: false
@@ -218,14 +283,19 @@ module Fastlane
         device_pools.device_pools.detect { |p| p.name == device_pool }
       end
 
-      def self.schedule_run(name, project, device_pool, upload, test_upload, type)
+      def self.schedule_run(name, project, device_pool, upload, test_upload, type, params)
         # Prepare the test hash depening if you passed the test apk.
         test_hash = { type: 'BUILTIN_FUZZ' }
         if test_upload
-          test_hash[:type] = 'XCTEST_UI'
-          if type == "ANDROID_APP"
-            test_hash[:type] = 'INSTRUMENTATION'
+          if params[:test_type]
+            test_hash[:type] = params[:test_type]
+          else
+            test_hash[:type] = 'XCTEST_UI'
+            if type == "ANDROID_APP"
+              test_hash[:type] = 'INSTRUMENTATION'
+            end
           end
+
           test_hash[:test_package_arn] = test_upload.arn
         end
 
@@ -244,29 +314,43 @@ module Fastlane
         }).run
       end
 
-      def self.wait_for_run(run)
+      def self.wait_for_run(project, run)
         while run.status != 'COMPLETED'
           sleep POLLING_INTERVAL
+          print '.'
           run = fetch_run_status run
         end
         UI.message "The run ended with result #{run.result}."
         UI.important "Minutes Counted: #{run.device_minutes.total}"
 
+        UI.verbose "RUN ARN: #{run.arn}."
+        ENV["AWS_DEVICE_FARM_RUN_ARN"] = run.arn
+        UI.verbose "PROJECT ARN: #{project.arn}."
+        ENV["AWS_DEVICE_FARM_PROJECT_ARN"] = project.arn
+
         job = @client.list_jobs({
-                arn: run.arn
-            })
+            arn: run.arn,
+        })
 
         rows = []
         job.jobs.each do |j|
           if j.result == "PASSED"
             status = "💚 (#{j.result})"
+          elsif j.result == "FAILED"
+              status = "💥 (#{j.result})"
           elsif j.result == "ERRORED"
-            status = "📵 (#{j.result})"
+            if $allow_device_errors == false
+              status = "📵 (#{j.result})"
+            else
+              status = "Ignored 📵 (#{j.result})"
+              run.result = "ALLOWED"
+            end
           else
-            status = "💥 (#{j.result})"
+            status = "#{j.result}"
           end
           rows << [status, j.name, j.device.form_factor, j.device.platform, j.device.os]
         end
+
         puts ""
         puts Terminal::Table.new(
           title: "Device Farm Summary".green,

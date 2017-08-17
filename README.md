@@ -1,10 +1,10 @@
 # AWS Device Farm Plugin for Fastlane
 
-[![fastlane Plugin Badge](https://rawcdn.githack.com/fastlane/fastlane/master/fastlane/assets/plugin-badge.svg)](https://rubygems.org/gems/fastlane-plugin-sharethemeal)
+[![fastlane Plugin Badge](https://rawcdn.githack.com/fastlane/fastlane/master/fastlane/assets/plugin-badge.svg)](https://rubygems.org/gems/fastlane-plugin-aws_device_farm)
 
 
 ## About
-> This Plugin Allows XCUITests and android Instrumentation tests run on AWS device Farm
+> This Plugin allows tests run on AWS device Farm
 
 
 | iOS | Android | Fail |
@@ -74,6 +74,10 @@ lane :aws_device_run_android do
 end
 ```
 
+The plugin also exposes two ENV variables in case you want to make additional calls after the action is finished.
+`ENV["AWS_DEVICE_FARM_RUN_ARN"] containing the arn of the run`
+`ENV["AWS_DEVICE_FARM_PROJECT_ARN"] containing the arn of the project`
+
 ## Options
 
  * **aws_device_farm**
@@ -82,11 +86,15 @@ end
 |---|---|---|---|
 |  name |  fastlane  |  AWS Device Farm Project Name |  String |
 |  binary_path |    |  Path to App Binary |  String |
-|  test_binary_path |    |  Path to App Binary |  String |
+|  test_binary_path |    |  Path to test bundle |  String |
+|  test_package_type |    |  Type of test package |  String |
+|  test_type |    |  Type of test |  String |
 |  device_pool | IOS | AWS Device Farm Device Pool | String |
 |  wait_for_completion | true | Wait for Test-Run to be completed | Boolean |
 |  allow_device_errors | false | Do you want to allow device booting errors? | Boolean |
+|  allow_failed_tests | false | Do you want to allow failing tests? | Boolean |
 
+Possible types see: http://docs.aws.amazon.com/sdkforruby/api/Aws/DeviceFarm/Client.html#create_upload-instance_method
 
 * **aws_device_farm_package**
 
